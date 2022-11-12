@@ -14,6 +14,8 @@ nft_log_prefix = "nft_in_unmtch"
 
 db_table_services = """ CREATE TABLE IF NOT EXISTS services (
   id integer PRIMARY KEY,
+  first_seen text NOT NULL,
+  last_seen text NOT NULL,
   port integer NOT NULL,
   proto text NOT NULL,
   name text
@@ -22,7 +24,10 @@ db_table_services = """ CREATE TABLE IF NOT EXISTS services (
 
 db_table_addresses = """ CREATE TABLE IF NOT EXISTS addresses (
   id integer PRIMARY KEY,
-  ip_address text NOT NULL
+  first_seen text NOT NULL,
+  last_seen text NOT NULL,
+  ip_address text NOT NULL,
+  whois_record text
 )
 """
 
@@ -40,12 +45,18 @@ def create_table(db, table_spec) -> None:
   cursor = db.cursor()
   cursor.execute(table_spec)
 
+def alter_table(db, alter_spec) -> None:
+  cursor = db.cursor()
+  cursor.execute(alter_spec)
+
 def upsert_service(db, port: int, proto: str) -> None:
   cursor = db.cursor()
-  cursor.execute("SELECT * FROM services WHERE port = ? AND proto = ?", (port, proto))
+  cursor.execute("SELECT id FROM services WHERE port = ? AND proto = ?", (port, proto))
   service = cursor.fetchone()
 
   if service != None:
+    cursor = db.cursor()
+    cursor.execute("UPDATE services SET last_seen = datetime('now') WHERE id = ?", service)
     return service[0]
 
   # service does not exist yet -> create new entry
@@ -56,30 +67,32 @@ def upsert_service(db, port: int, proto: str) -> None:
   except OSError:
     pass
   
-  cursor.execute("INSERT INTO services(port, proto, name) VALUES(?, ?, ?)", (port, proto, service_name))
+  cursor.execute("INSERT INTO services(port, proto, name, first_seen, last_seen) VALUES(?, ?, ?, datetime('now'), datetime('now'))", (port, proto, service_name))
   return cursor.lastrowid
 
 def upsert_address(db, ip_address: str) -> int:
   cursor = db.cursor()
-  cursor.execute("SELECT * FROM addresses WHERE ip_address = ?", (ip_address,))
+  cursor.execute("SELECT id FROM addresses WHERE ip_address = ?", (ip_address,))
   address = cursor.fetchone()
 
   if address != None:
+    cursor = db.cursor()
+    cursor.execute("UPDATE addresses SET last_seen = datetime('now') WHERE id = ?", address)
     return address[0]
 
   # address does not exist yet -> create new entry
   cursor = db.cursor()
-  cursor.execute("INSERT INTO addresses(ip_address) VALUES(?)", (ip_address,))
+  cursor.execute("INSERT INTO addresses(first_seen, last_seen, ip_address) VALUES(datetime('now'), datetime('now'), ?)", (ip_address,))
   return cursor.lastrowid
 
 def increment_call(db, address_id: int, service_id: int):
   cursor = db.cursor()
-  cursor.execute("SELECT * FROM calls WHERE address_id = ? AND service_id = ?", (address_id, service_id))
+  cursor.execute("SELECT id,count FROM calls WHERE address_id = ? AND service_id = ?", (address_id, service_id))
   call = cursor.fetchone()
 
   if call != None:
     cursor = db.cursor()
-    cursor.execute("UPDATE calls SET count = ? WHERE id = ?", (call[3] + 1, call[0]))
+    cursor.execute("UPDATE calls SET count = ? WHERE id = ?", (call[1] + 1, call[0]))
   else:
     cursor = db.cursor()
     cursor.execute("INSERT INTO calls(address_id, service_id, count) VALUES(?, ?, ?)", (address_id, service_id, 1))
@@ -154,6 +167,9 @@ def main():
             except sqlite3.Error as e:
               print(e)
               print("Continue with next packet...")
+            except Exception as e:
+              print("Unhandled packet: {}".format(part))
+              raise e
 
       finally:
         print("Closing connection")
