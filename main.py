@@ -181,13 +181,14 @@ def main():
 
           src_ip = decoded["src_ip"]
           ip_protocol = decoded["ip.protocol"]
-          dest_port = decoded["dest_port"]
 
           protocol_name = None
           if ip_protocol == 6:
             protocol_name = "tcp"
+            dest_port = decoded["dest_port"]
           elif ip_protocol == 17:
             protocol_name = "udp"
+            dest_port = decoded["dest_port"]
           else:
             # not a TCP or UDP packet -> ignoring (for now)
             continue
